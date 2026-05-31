@@ -26,6 +26,9 @@ LOCAL_API_KEY = os.getenv("PI_BOB_PROXY_KEY", "pi-bob-local")
 # strict). Default to chat-only for pi reliability. Set BOB_ENABLE_TOOLS=1 to
 # experiment with tool calling.
 ENABLE_TOOLS = os.getenv("BOB_ENABLE_TOOLS", "0").lower() in {"1", "true", "yes", "on"}
+# Emulate OpenAI tool-calling over plain Bob chat. pi sends tools -> proxy injects
+# a text protocol -> Bob emits JSON -> proxy converts that to OpenAI tool_calls.
+TOOL_BRIDGE = os.getenv("BOB_TOOL_BRIDGE", "1").lower() in {"1", "true", "yes", "on"}
 
 # User-facing pi aliases. Values are the model/tier string passed to IBM Bob.
 # Override with BOB_MODEL_ALIASES='{"best":"premium","opus":"claude-opus"}'.
@@ -161,9 +164,186 @@ def _debug_payload(label: str, payload: dict[str, Any]) -> None:
     print(f"[pi-bob] {label}: " + json.dumps(scrub(payload), ensure_ascii=False), flush=True)
 
 
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict):
+                if item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+                elif item.get("type") == "image_url":
+                    parts.append("[image omitted]")
+                else:
+                    parts.append(json.dumps(item, ensure_ascii=False))
+            else:
+                parts.append(str(item))
+        return "\n".join(p for p in parts if p)
+    return json.dumps(content, ensure_ascii=False)
+
+
+def _tool_specs_for_prompt(tools: list[Any]) -> str:
+    specs: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        fn = tool.get("function") or {}
+        if not isinstance(fn, dict):
+            continue
+        specs.append(json.dumps({
+            "name": fn.get("name"),
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {}),
+        }, ensure_ascii=False))
+    return "\n".join(specs)
+
+
+def _bridge_tool_messages(messages: list[dict[str, Any]], tools: list[Any]) -> list[dict[str, str]]:
+    tool_instruction = (
+        "You are running behind a compatibility adapter. You do not have native tool access.\n"
+        "When you need to use a tool, output ONLY compact JSON with this exact shape and no markdown:\n"
+        '{"tool_call":{"name":"tool_name","arguments":{}}}\n\n'
+        "Rules:\n"
+        "- Call at most one tool at a time.\n"
+        "- Use tools only when needed to answer or modify files.\n"
+        "- If no tool is needed, answer normally in plain text.\n"
+        "- After a tool result is provided, continue normally or request the next tool using the same JSON format.\n\n"
+        "Available tools as JSON schemas:\n" + _tool_specs_for_prompt(tools)
+    )
+
+    out: list[dict[str, str]] = []
+    inserted = False
+    for msg in messages:
+        role = msg.get("role")
+        if role in {"system", "developer"}:
+            content = _content_to_text(msg.get("content"))
+            if not inserted:
+                out.append({"role": "system", "content": content + "\n\n" + tool_instruction})
+                inserted = True
+            else:
+                out.append({"role": "system", "content": content})
+        elif role == "tool":
+            name = msg.get("name") or "tool"
+            tool_call_id = msg.get("tool_call_id") or ""
+            out.append({
+                "role": "user",
+                "content": f"Tool result for {name} (id {tool_call_id}):\n{_content_to_text(msg.get('content'))}",
+            })
+        elif role == "assistant":
+            tool_calls = msg.get("tool_calls") or []
+            if tool_calls:
+                out.append({"role": "assistant", "content": "Requested tool call(s): " + json.dumps(tool_calls, ensure_ascii=False)})
+            else:
+                out.append({"role": "assistant", "content": _content_to_text(msg.get("content"))})
+        else:
+            out.append({"role": "user", "content": _content_to_text(msg.get("content"))})
+    if not inserted:
+        out.insert(0, {"role": "system", "content": tool_instruction})
+    return out
+
+
+def _extract_json_tool_payload(text: str) -> dict[str, Any] | None:
+    raw = text.strip()
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+    candidates = [raw]
+    if "{" in raw and "}" in raw:
+        candidates.append(raw[raw.find("{"): raw.rfind("}") + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(parsed, dict) and ("tool_call" in parsed or "tool_calls" in parsed or "final" in parsed):
+            return parsed
+    return None
+
+
+def _normalize_bridge_tool_calls(parsed: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_calls = parsed.get("tool_calls")
+    if raw_calls is None and parsed.get("tool_call") is not None:
+        raw_calls = [parsed["tool_call"]]
+    if not isinstance(raw_calls, list):
+        return []
+    calls: list[dict[str, Any]] = []
+    for call in raw_calls[:1]:
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function") if isinstance(call.get("function"), dict) else call
+        name = fn.get("name") if isinstance(fn, dict) else None
+        args = fn.get("arguments", {}) if isinstance(fn, dict) else {}
+        if isinstance(args, str):
+            try:
+                args_obj = json.loads(args)
+            except Exception:
+                args_obj = {}
+        elif isinstance(args, dict):
+            args_obj = args
+        else:
+            args_obj = {}
+        if isinstance(name, str) and name:
+            calls.append({
+                "id": f"call_{uuid.uuid4().hex[:24]}",
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(args_obj, ensure_ascii=False)},
+            })
+    return calls
+
+
+def _apply_bridge_parse(payload: dict[str, Any], bridge_active: bool) -> dict[str, Any]:
+    if not bridge_active:
+        return payload
+    choices = payload.get("choices") or []
+    if not choices:
+        return payload
+    message = choices[0].get("message") or {}
+    content = message.get("content") or ""
+    if not isinstance(content, str) or not content.strip():
+        return payload
+    parsed = _extract_json_tool_payload(content)
+    if not parsed:
+        return payload
+    tool_calls = _normalize_bridge_tool_calls(parsed)
+    if tool_calls:
+        message["content"] = None
+        message["tool_calls"] = tool_calls
+        choices[0]["message"] = message
+        choices[0]["finish_reason"] = "tool_calls"
+    elif isinstance(parsed.get("final"), str):
+        message["content"] = parsed["final"]
+        choices[0]["message"] = message
+    return payload
+
+
+def _prepare_for_bob(messages: list[dict[str, Any]], body: dict[str, Any]) -> tuple[list[dict[str, Any]], bool]:
+    tools = body.get("tools")
+    if TOOL_BRIDGE and isinstance(tools, list) and tools:
+        bridged_messages = _bridge_tool_messages(messages, tools)
+        body.pop("tools", None)
+        body.pop("tool_choice", None)
+        body.pop("parallel_tool_calls", None)
+        return bridged_messages, True
+    _maybe_disable_tools(body)
+    return messages, False
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "models": BOB_MODELS, "aliases": MODEL_ALIASES, "tools_enabled": ENABLE_TOOLS}
+    return {
+        "ok": True,
+        "models": BOB_MODELS,
+        "aliases": MODEL_ALIASES,
+        "native_tools_enabled": ENABLE_TOOLS,
+        "tool_bridge_enabled": TOOL_BRIDGE,
+    }
 
 
 @app.get("/v1/models")
@@ -211,9 +391,9 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     stream = bool(body.pop("stream", False))
     body["messages"] = messages
     _sanitize_tools_for_bob(body)
-    _maybe_disable_tools(body)
     messages = body.pop("messages", [])
-    _debug_payload("request", {"model": model, "stream": stream, "messages": messages, **body})
+    messages, bridge_active = _prepare_for_bob(messages, body)
+    _debug_payload("request", {"model": model, "stream": stream, "bridge_active": bridge_active, "messages": messages, **body})
 
     # LiteLLM accepts most OpenAI params directly. Drop OpenAI-only/OpenAI-cache
     # fields the Bob provider or underlying Bedrock routes may not understand.
@@ -223,7 +403,8 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     try:
         if not stream:
             resp = await litellm.acompletion(model=model, messages=messages, stream=False, **body)
-            return JSONResponse(json.loads(resp.model_dump_json()))
+            payload = _apply_bridge_parse(json.loads(resp.model_dump_json()), bridge_active)
+            return JSONResponse(payload)
 
         # pi uses OpenAI streaming. IBM Bob/LiteLLM streaming can terminate on
         # some Bob routes, so use a robust compatibility bridge: perform a
@@ -232,7 +413,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
         # awaited before creating StreamingResponse, so failures are returned as
         # normal JSON errors instead of ASGI TaskGroup crashes.
         resp = await litellm.acompletion(model=model, messages=messages, stream=False, **body)
-        payload = json.loads(resp.model_dump_json())
+        payload = _apply_bridge_parse(json.loads(resp.model_dump_json()), bridge_active)
         chunk_id = payload.get("id") or f"chatcmpl-{uuid.uuid4().hex}"
         created = payload.get("created") or int(time.time())
         response_model = payload.get("model") or model

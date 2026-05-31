@@ -66,7 +66,7 @@ fi
 rm -f "$MODEL_INFO_TMP"
 
 echo
-echo "[4/4] Chat completion"
+echo "[4/5] Chat completion"
 CHAT_BODY="$(mktemp)"
 python3 - "$MODEL" "$PROMPT" > "$CHAT_BODY" <<'PY'
 import json, sys
@@ -89,7 +89,7 @@ echo "HTTP $HTTP_CODE"
 if [[ "$HTTP_CODE" == 2* ]]; then
   "${JSON_PRETTY[@]}" < "$CHAT_OUT" || cat "$CHAT_OUT"
   echo
-  echo "[5/5] Streaming chat compatibility"
+  echo "[5/6] Streaming chat compatibility"
   STREAM_BODY="$(mktemp)"
   python3 - "$MODEL" "$PROMPT" > "$STREAM_BODY" <<'PY'
 import json, sys
@@ -132,3 +132,48 @@ EOF
   exit 1
 fi
 rm -f "$CHAT_BODY" "$CHAT_OUT" "$CHAT_ERR"
+
+
+echo
+echo "[6/6] pi-like streaming request with tools"
+PI_BODY="$(mktemp)"
+python3 - "$MODEL" > "$PI_BODY" <<'PY'
+import json, sys
+model = sys.argv[1]
+print(json.dumps({
+  "model": model,
+  "stream": True,
+  "messages": [
+    {"role": "system", "content": "You are a concise coding assistant."},
+    {"role": "user", "content": "Reply with exactly: OK"}
+  ],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "read",
+      "description": "Read a file",
+      "strict": True,
+      "parameters": {
+        "type": "object",
+        "properties": {"path": {"type": "string"}},
+        "required": ["path"],
+        "additionalProperties": False
+      }
+    }
+  }]
+}))
+PY
+if curl -fsS --max-time "$TIMEOUT" \
+  -H "Authorization: Bearer $LOCAL_KEY" \
+  -H 'Content-Type: application/json' \
+  -d @"$PI_BODY" \
+  "$BASE_URL/v1/chat/completions" | tee /tmp/pi-bob-test-pilike.out | grep -q 'data: \[DONE\]'; then
+  echo
+  echo "PASS: pi-like tool-bearing streaming request succeeded."
+else
+  echo "FAIL: pi-like tool-bearing streaming request failed." >&2
+  cat /tmp/pi-bob-test-pilike.out 2>/dev/null || true
+  rm -f "$PI_BODY"
+  exit 1
+fi
+rm -f "$PI_BODY"

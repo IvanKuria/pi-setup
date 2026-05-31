@@ -8,71 +8,124 @@
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
         "supportsUsageInStreaming": false,
-        "maxTokensField": "max_tokens"
+        "maxTokensField": "max_tokens",
+        "supportsStrictMode": false,
+        "requiresToolResultName": true,
+        "requiresAssistantAfterToolResult": true,
+        "supportsStore": false
       },
       "models": [
         {
           "id": "bob-best",
           "name": "IBM Bob Best / Strongest Route",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-java-optim",
           "name": "IBM Bob Java + Optim / Data Archiving",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-python",
           "name": "IBM Bob Python / Data Pipelines",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-premium",
           "name": "IBM Bob Premium",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-opus",
           "name": "IBM Bob Opus Preference / Direct If Available",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-gpt",
           "name": "IBM Bob GPT Preference / Direct If Available",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 16384,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         },
         {
           "id": "bob-fast",
           "name": "IBM Bob Fast",
           "reasoning": false,
-          "input": ["text"],
+          "input": [
+            "text"
+          ],
           "contextWindow": 128000,
           "maxTokens": 8192,
-          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          }
         }
       ]
     }

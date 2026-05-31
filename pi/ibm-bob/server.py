@@ -97,6 +97,56 @@ def _merge_metadata(body: dict[str, Any], alias_metadata: dict[str, Any]) -> Non
     body["metadata"] = metadata
 
 
+def _strip_cache_control(value: Any) -> Any:
+    """Remove Anthropic/OpenAI cache-control annotations some backends reject."""
+    if isinstance(value, dict):
+        return {k: _strip_cache_control(v) for k, v in value.items() if k != "cache_control"}
+    if isinstance(value, list):
+        return [_strip_cache_control(v) for v in value]
+    return value
+
+
+def _sanitize_tools_for_bob(body: dict[str, Any]) -> None:
+    """Normalize pi/OpenAI tool definitions for Bob's LiteLLM/Bedrock routes.
+
+    pi's OpenAI-compatible provider can send `strict` and cache-control fields.
+    Bedrock/LiteLLM routes are stricter and public LiteLLM issues show tool
+    conversion failures around OpenAI tool metadata and tool-result messages.
+    """
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            tool.pop("cache_control", None)
+            function = tool.get("function")
+            if isinstance(function, dict):
+                function.pop("strict", None)
+                # Bedrock tool names must be alphanumeric/underscore/hyphen.
+                name = function.get("name")
+                if isinstance(name, str):
+                    cleaned = "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)[:64]
+                    function["name"] = cleaned or "tool"
+                parameters = function.get("parameters")
+                if isinstance(parameters, dict):
+                    function["parameters"] = _strip_cache_control(parameters)
+    body["messages"] = _strip_cache_control(body.get("messages", []))
+
+
+def _debug_payload(label: str, payload: dict[str, Any]) -> None:
+    if os.getenv("BOB_DEBUG_REQUESTS") != "1":
+        return
+    def scrub(v: Any) -> Any:
+        if isinstance(v, str):
+            return f"<str len={len(v)}>" if len(v) > 120 else v
+        if isinstance(v, list):
+            return [scrub(x) for x in v[:10]]
+        if isinstance(v, dict):
+            return {k: scrub(val) for k, val in v.items() if k.lower() not in {"authorization", "api_key"}}
+        return v
+    print(f"[pi-bob] {label}: " + json.dumps(scrub(payload), ensure_ascii=False), flush=True)
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     return {"ok": True, "models": BOB_MODELS, "aliases": MODEL_ALIASES}
@@ -145,10 +195,15 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     _merge_metadata(body, alias_metadata)
     messages = body.pop("messages", [])
     stream = bool(body.pop("stream", False))
+    body["messages"] = messages
+    _sanitize_tools_for_bob(body)
+    messages = body.pop("messages", [])
+    _debug_payload("request", {"model": model, "stream": stream, "messages": messages, **body})
 
-    # LiteLLM accepts most OpenAI params directly. Drop OpenAI-only stream_options;
-    # the Bob provider may not understand it.
-    body.pop("stream_options", None)
+    # LiteLLM accepts most OpenAI params directly. Drop OpenAI-only/OpenAI-cache
+    # fields the Bob provider or underlying Bedrock routes may not understand.
+    for unsupported in ("stream_options", "prompt_cache_key", "prompt_cache_retention", "store"):
+        body.pop(unsupported, None)
 
     try:
         if not stream:

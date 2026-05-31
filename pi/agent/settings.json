@@ -1,0 +1,10 @@
+{
+  "lastChangelogVersion": "0.73.0",
+  "defaultProvider": "ibm-bob",
+  "defaultModel": "bob-best",
+  "defaultThinkingLevel": "off",
+  "packages": [
+    "npm:pi-web-access",
+    "npm:pi-autoresearch"
+  ]
+}

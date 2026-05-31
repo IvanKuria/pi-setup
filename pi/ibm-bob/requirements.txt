@@ -1,4 +1,3 @@
 fastapi
 uvicorn[standard]
 litellm
-litellm-ibm-bob

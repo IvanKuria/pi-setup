@@ -17,6 +17,24 @@ Portable pi configuration for using pi as the harness with IBM Bob as the defaul
 - skill: `enterprise-java-optim`
 - project starter template for enterprise Java / Optim repos
 
+
+## SWE intern / Maximo workflow additions
+
+Additional prompt templates:
+
+- `/maximo-investigate` - investigate Maximo/MAS code before editing
+- `/minimal-impl` - implement the smallest clean change
+- `/clean-code-gate` - review for over-engineering and maintainability
+- `/onboard-explain` - explain code as onboarding material
+- `/pr-summary` - generate a concise PR summary
+- `/learn-from-change` - turn a change into intern learning notes
+
+Additional skill:
+
+- `enterprise-maximo` - Maximo/MAS, enterprise Java, integrations, automation scripts, clean intern workflow
+
+Core principle: help write code that is clean, modular, reviewable, and not overly excessive.
+
 ## Install on a laptop
 
 Requires Python 3.11+. On macOS, install with `brew install python@3.12` if needed.

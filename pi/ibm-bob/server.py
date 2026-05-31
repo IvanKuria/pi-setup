@@ -3,6 +3,7 @@
 import json
 import os
 import time
+import uuid
 from typing import Any
 
 import litellm
@@ -154,10 +155,74 @@ async def chat_completions(request: Request, authorization: str | None = Header(
             resp = await litellm.acompletion(model=model, messages=messages, stream=False, **body)
             return JSONResponse(json.loads(resp.model_dump_json()))
 
+        # pi uses OpenAI streaming. IBM Bob/LiteLLM streaming can terminate on
+        # some Bob routes, so use a robust compatibility bridge: perform a
+        # normal Bob completion and stream the final assistant message back as
+        # OpenAI-compatible SSE chunks. This is less token-by-token, but much
+        # more reliable for pi.
         async def event_stream():
-            chunks = await litellm.acompletion(model=model, messages=messages, stream=True, **body)
-            async for chunk in chunks:
-                yield "data: " + chunk.model_dump_json() + "\n\n"
+            resp = await litellm.acompletion(model=model, messages=messages, stream=False, **body)
+            payload = json.loads(resp.model_dump_json())
+            chunk_id = payload.get("id") or f"chatcmpl-{uuid.uuid4().hex}"
+            created = payload.get("created") or int(time.time())
+            response_model = payload.get("model") or model
+            choices = payload.get("choices") or []
+            message = (choices[0].get("message") if choices else {}) or {}
+            content = message.get("content") or ""
+            tool_calls = message.get("tool_calls") or []
+            finish_reason = (choices[0].get("finish_reason") if choices else None) or "stop"
+
+            def send(obj: dict[str, Any]) -> str:
+                return "data: " + json.dumps(obj, separators=(",", ":"), ensure_ascii=False) + "\n\n"
+
+            yield send({
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": response_model,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            })
+            if content:
+                yield send({
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": response_model,
+                    "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+                })
+            for i, tool_call in enumerate(tool_calls):
+                function = tool_call.get("function") or {}
+                yield send({
+                    "id": chunk_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": response_model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {
+                            "tool_calls": [{
+                                "index": i,
+                                "id": tool_call.get("id") or f"call_{i}",
+                                "type": tool_call.get("type") or "function",
+                                "function": {
+                                    "name": function.get("name") or "",
+                                    "arguments": function.get("arguments") or "{}",
+                                },
+                            }]
+                        },
+                        "finish_reason": None,
+                    }],
+                })
+            done: dict[str, Any] = {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": response_model,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+            }
+            if payload.get("usage"):
+                done["usage"] = payload["usage"]
+            yield send(done)
             yield "data: [DONE]\n\n"
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")

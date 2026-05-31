@@ -89,7 +89,31 @@ echo "HTTP $HTTP_CODE"
 if [[ "$HTTP_CODE" == 2* ]]; then
   "${JSON_PRETTY[@]}" < "$CHAT_OUT" || cat "$CHAT_OUT"
   echo
-  echo "PASS: connector can complete a chat request."
+  echo "[5/5] Streaming chat compatibility"
+  STREAM_BODY="$(mktemp)"
+  python3 - "$MODEL" "$PROMPT" > "$STREAM_BODY" <<'PY'
+import json, sys
+model, prompt = sys.argv[1], sys.argv[2]
+print(json.dumps({
+    "model": model,
+    "stream": True,
+    "messages": [{"role": "user", "content": prompt}],
+}))
+PY
+  if curl -fsS --max-time "$TIMEOUT" \
+    -H "Authorization: Bearer $LOCAL_KEY" \
+    -H 'Content-Type: application/json' \
+    -d @"$STREAM_BODY" \
+    "$BASE_URL/v1/chat/completions" | tee /tmp/pi-bob-test-stream.out | grep -q 'data: \[DONE\]'; then
+    echo
+    echo "PASS: connector can complete non-streaming and streaming chat requests."
+  else
+    echo "FAIL: streaming compatibility check failed." >&2
+    cat /tmp/pi-bob-test-stream.out 2>/dev/null || true
+    rm -f "$STREAM_BODY"
+    exit 1
+  fi
+  rm -f "$STREAM_BODY"
 else
   echo "FAIL: chat completion failed or timed out."
   echo "Response body:"

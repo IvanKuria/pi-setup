@@ -40,6 +40,22 @@ Default aliases exposed to pi:
 - `bob-gpt` -> `gpt` direct preference, only works if Bob exposes that ID or you remap it
 - `bob-fast` -> `fast`
 
+
+## Automated smoke test
+
+With the connector running in one terminal, run this in another:
+
+```bash
+~/.pi/ibm-bob/test.sh
+```
+
+Optional:
+
+```bash
+~/.pi/ibm-bob/test.sh bob-best "Say hello in one sentence."
+PI_BOB_TEST_TIMEOUT=120 ~/.pi/ibm-bob/test.sh bob-java-optim "Reply with OK."
+```
+
 ## Test
 
 ```bash

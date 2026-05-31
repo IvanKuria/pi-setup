@@ -42,6 +42,22 @@ export BOBSHELL_API_KEY='<your_bob_api_key>'
 
 Run pi normally. Default model is `ibm-bob/bob-best`.
 
+
+## Automated smoke test
+
+With the connector running in one terminal, run this in another:
+
+```bash
+~/.pi/ibm-bob/test.sh
+```
+
+Optional:
+
+```bash
+~/.pi/ibm-bob/test.sh bob-best "Say hello in one sentence."
+PI_BOB_TEST_TIMEOUT=120 ~/.pi/ibm-bob/test.sh bob-java-optim "Reply with OK."
+```
+
 ## Optional Bob routing aliases
 
 The connector exposes these pi models:

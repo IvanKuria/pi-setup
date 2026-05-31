@@ -7,10 +7,14 @@ rsync -a "$root/pi/agent/prompts/" "$HOME/.pi/agent/prompts/"
 rsync -a "$root/pi/agent/skills/" "$HOME/.pi/agent/skills/"
 rsync -a "$root/pi/agent/knowledge/" "$HOME/.pi/agent/knowledge/"
 rsync -a "$root/pi/agent/project-templates/" "$HOME/.pi/agent/project-templates/"
+if [[ -d "$root/pi/agent/scripts" ]]; then
+  rsync -a "$root/pi/agent/scripts/" "$HOME/.pi/agent/scripts/"
+fi
 cp "$root/pi/agent/models.json" "$HOME/.pi/agent/models.json"
 cp "$root/pi/agent/settings.json" "$HOME/.pi/agent/settings.json"
 chmod +x "$HOME/.pi/ibm-bob"/*.sh "$HOME/.pi/ibm-bob/server.py" 2>/dev/null || true
 find "$HOME/.pi/agent/project-templates" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
+find "$HOME/.pi/agent/scripts" -name '*.sh' -exec chmod +x {} \; 2>/dev/null || true
 cat <<'EOF'
 Installed pi setup.
 

@@ -18,6 +18,28 @@ Portable pi configuration for using pi as the harness with IBM Bob as the defaul
 - project starter template for enterprise Java / Optim repos
 
 
+
+## Fast ticket workflow
+
+Daily Maximo/SWE intern flow:
+
+```text
+/ticket-start MAX-12345: describe the issue
+/ticket-implement implement the approved smallest option
+/ticket-finish MAX-12345
+/safe-commit "MAX-12345: concise commit message"
+/standup MAX-12345
+```
+
+Context helper scripts installed into project templates and globally:
+
+```bash
+scripts/pi-context/repo-health.sh
+scripts/pi-context/java-test-detect.sh
+scripts/pi-context/changed-files-summary.sh
+~/.pi/agent/scripts/pi-context/repo-health.sh
+```
+
 ## SWE intern / Maximo workflow additions
 
 Additional prompt templates:

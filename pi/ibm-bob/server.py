@@ -2,6 +2,7 @@
 """OpenAI-compatible local proxy for IBM Bob via litellm-ibm-bob."""
 import json
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -203,14 +204,20 @@ def _tool_specs_for_prompt(tools: list[Any]) -> str:
 
 def _bridge_tool_messages(messages: list[dict[str, Any]], tools: list[Any]) -> list[dict[str, str]]:
     tool_instruction = (
-        "You are running behind a compatibility adapter. You do not have native tool access.\n"
-        "When you need to use a tool, output ONLY compact JSON with this exact shape and no markdown:\n"
+        "CRITICAL TOOL PROTOCOL FOR COMPATIBILITY ADAPTER:\n"
+        "You do not have native tool access. The adapter can execute tools ONLY if your entire assistant message is valid JSON.\n"
+        "If you need to inspect files, run shell commands, edit, write, grep, find, or push to git, you MUST output ONLY this JSON and no prose/markdown/code fence:\n"
         '{"tool_call":{"name":"tool_name","arguments":{}}}\n\n'
+        "Examples:\n"
+        '{"tool_call":{"name":"bash","arguments":{"command":"git status --short"}}}\n'
+        '{"tool_call":{"name":"read","arguments":{"path":"README.md"}}}\n'
+        '{"tool_call":{"name":"write","arguments":{"path":"file.txt","content":"hello\n"}}}\n\n'
         "Rules:\n"
-        "- Call at most one tool at a time.\n"
-        "- Use tools only when needed to answer or modify files.\n"
+        "- Call exactly one tool at a time.\n"
+        "- Do not say 'I will run' or 'Requested tool call'; emit JSON only.\n"
+        "- Use tools whenever needed to answer accurately or modify/push code.\n"
         "- If no tool is needed, answer normally in plain text.\n"
-        "- After a tool result is provided, continue normally or request the next tool using the same JSON format.\n\n"
+        "- After a tool result is provided, continue or request the next tool with JSON only.\n\n"
         "Available tools as JSON schemas:\n" + _tool_specs_for_prompt(tools)
     )
 
@@ -245,6 +252,22 @@ def _bridge_tool_messages(messages: list[dict[str, Any]], tools: list[Any]) -> l
     return out
 
 
+
+def _coerce_tool_payload(parsed: Any) -> dict[str, Any] | None:
+    if isinstance(parsed, dict):
+        if "tool_call" in parsed or "tool_calls" in parsed or "final" in parsed:
+            return parsed
+        # tolerate common model variants
+        if "name" in parsed and ("arguments" in parsed or "args" in parsed):
+            return {"tool_call": {"name": parsed.get("name"), "arguments": parsed.get("arguments", parsed.get("args", {}))}}
+        if "tool" in parsed and isinstance(parsed.get("tool"), str):
+            return {"tool_call": {"name": parsed.get("tool"), "arguments": parsed.get("arguments", parsed.get("args", {}))}}
+    if isinstance(parsed, list) and parsed:
+        first = _coerce_tool_payload(parsed[0])
+        if first:
+            return first
+    return None
+
 def _extract_json_tool_payload(text: str) -> dict[str, Any] | None:
     raw = text.strip()
     if raw.startswith("```"):
@@ -254,16 +277,31 @@ def _extract_json_tool_payload(text: str) -> dict[str, Any] | None:
         if lines and lines[-1].strip().startswith("```"):
             lines = lines[:-1]
         raw = "\n".join(lines).strip()
+
     candidates = [raw]
+    # tolerate prose before/after JSON
     if "{" in raw and "}" in raw:
         candidates.append(raw[raw.find("{"): raw.rfind("}") + 1])
+    if "[" in raw and "]" in raw:
+        candidates.append(raw[raw.find("["): raw.rfind("]") + 1])
+
     for candidate in candidates:
         try:
             parsed = json.loads(candidate)
         except Exception:
             continue
-        if isinstance(parsed, dict) and ("tool_call" in parsed or "tool_calls" in parsed or "final" in parsed):
-            return parsed
+        coerced = _coerce_tool_payload(parsed)
+        if coerced:
+            return coerced
+
+    # last-resort parser for lines like: tool: bash arguments: {"command":"git status"}
+    m = re.search(r"(?:tool|name)\s*[:=]\s*([a-zA-Z0-9_-]+).*?(?:arguments|args)\s*[:=]\s*(\{.*\})", raw, re.I | re.S)
+    if m:
+        try:
+            args = json.loads(m.group(2))
+        except Exception:
+            args = {}
+        return {"tool_call": {"name": m.group(1), "arguments": args}}
     return None
 
 
@@ -313,6 +351,7 @@ def _apply_bridge_parse(payload: dict[str, Any], bridge_active: bool) -> dict[st
         return payload
     tool_calls = _normalize_bridge_tool_calls(parsed)
     if tool_calls:
+        _debug_payload("bridge_tool_call", {"tool_calls": tool_calls})
         message["content"] = None
         message["tool_calls"] = tool_calls
         choices[0]["message"] = message

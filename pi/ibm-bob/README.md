@@ -5,6 +5,8 @@ pi talks to `http://127.0.0.1:4010/v1`; the proxy signs/routes requests to Bob.
 
 ## Install
 
+Requires Python 3.11+. On macOS, install with `brew install python@3.12` if needed.
+
 ```bash
 ~/.pi/ibm-bob/setup.sh
 ```

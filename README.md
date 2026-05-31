@@ -19,6 +19,8 @@ Portable pi configuration for using pi as the harness with IBM Bob as the defaul
 
 ## Install on a laptop
 
+Requires Python 3.11+. On macOS, install with `brew install python@3.12` if needed.
+
 ```bash
 git clone https://github.com/IvanKuria/pi-setup.git
 cd pi-setup

@@ -41,6 +41,22 @@ Default aliases exposed to pi:
 - `bob-fast` -> `fast`
 
 
+
+### Important: pi tools vs Bob inference
+
+The connector defaults to **chat-only** (`BOB_ENABLE_TOOLS=0`) because Bob's inference endpoint, as reached through `litellm-ibm-bob`, is not consistently OpenAI tool-call compatible across Bob's routed backend model groups. This makes simple pi prompts reliable. To experiment with pi tool calling, start the connector with:
+
+```bash
+export BOB_ENABLE_TOOLS=1
+~/.pi/ibm-bob/start.sh
+```
+
+For an end-to-end pi test, run:
+
+```bash
+~/.pi/ibm-bob/test-pi.sh "Say hello in one sentence."
+```
+
 ## Automated smoke test
 
 With the connector running in one terminal, run this in another:

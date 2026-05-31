@@ -20,6 +20,12 @@ BOB_MODELS = [
     if m.strip()
 ]
 LOCAL_API_KEY = os.getenv("PI_BOB_PROXY_KEY", "pi-bob-local")
+# Bob's public shell/API docs expose Bob Shell tools and MCP, but the inference
+# endpoint used by litellm-ibm-bob is not a reliable OpenAI tool-calling backend
+# across Bob's routed model groups (Bedrock/Mistral fallbacks are especially
+# strict). Default to chat-only for pi reliability. Set BOB_ENABLE_TOOLS=1 to
+# experiment with tool calling.
+ENABLE_TOOLS = os.getenv("BOB_ENABLE_TOOLS", "0").lower() in {"1", "true", "yes", "on"}
 
 # User-facing pi aliases. Values are the model/tier string passed to IBM Bob.
 # Override with BOB_MODEL_ALIASES='{"best":"premium","opus":"claude-opus"}'.
@@ -133,6 +139,14 @@ def _sanitize_tools_for_bob(body: dict[str, Any]) -> None:
     body["messages"] = _strip_cache_control(body.get("messages", []))
 
 
+def _maybe_disable_tools(body: dict[str, Any]) -> None:
+    if ENABLE_TOOLS:
+        return
+    body.pop("tools", None)
+    body.pop("tool_choice", None)
+    body.pop("parallel_tool_calls", None)
+
+
 def _debug_payload(label: str, payload: dict[str, Any]) -> None:
     if os.getenv("BOB_DEBUG_REQUESTS") != "1":
         return
@@ -149,7 +163,7 @@ def _debug_payload(label: str, payload: dict[str, Any]) -> None:
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    return {"ok": True, "models": BOB_MODELS, "aliases": MODEL_ALIASES}
+    return {"ok": True, "models": BOB_MODELS, "aliases": MODEL_ALIASES, "tools_enabled": ENABLE_TOOLS}
 
 
 @app.get("/v1/models")
@@ -197,6 +211,7 @@ async def chat_completions(request: Request, authorization: str | None = Header(
     stream = bool(body.pop("stream", False))
     body["messages"] = messages
     _sanitize_tools_for_bob(body)
+    _maybe_disable_tools(body)
     messages = body.pop("messages", [])
     _debug_payload("request", {"model": model, "stream": stream, "messages": messages, **body})
 
